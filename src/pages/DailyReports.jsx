@@ -21,7 +21,11 @@ const DailyReports = () => {
   const { userData } = useStore();
   const [reports,         setReports]         = useState([]);
   const [filteredReports, setFilteredReports] = useState([]);
-  const [settings,        setSettings]        = useState(null);
+  const [globalSettings,  setGlobalSettings]  = useState({
+    departmentName: '',
+    address: '',
+    contact: '',
+  });
   const [dateRange,       setDateRange]       = useState({
     startDate: format(startOfMonth(new Date()), 'yyyy-MM-dd'),
     endDate:   format(endOfMonth(new Date()),   'yyyy-MM-dd'),
@@ -34,20 +38,31 @@ const DailyReports = () => {
   // ── STRICT role check — only 'admin' can see all reports ─────────────────────
   const isAdmin = userData?.role === 'admin';
 
+  // ── Modified to map user's isolated custom holidays ──────────────────────────
   const getHolidaySet = () => {
-    const list = settings?.holidays;
-    if (Array.isArray(list) && list.length > 0) {
-      return new Set(list.map(h => (typeof h === 'string' ? h : h.date)));
+    // Look for holidays saved directly in the active user profile data
+    const userHolidays = userData?.holidays;
+    if (Array.isArray(userHolidays) && userHolidays.length > 0) {
+      return new Set(userHolidays.map(h => (typeof h === 'string' ? h : h.date)));
     }
+    // Fall back to statutory country default values
     return new Set(DEFAULT_PH_HOLIDAYS);
   };
 
-  const fetchSettings = async () => {
+  // ── Fetch Shared Department Information ──────────────────────────────────────
+  const fetchGlobalConfig = async () => {
     try {
-      const snap = await getDoc(doc(db, 'settings', 'general'));
-      if (snap.exists()) setSettings(snap.data());
-    } catch {
-      // Use defaults
+      const docSnap = await getDoc(doc(db, 'settings', 'general'));
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        setGlobalSettings({
+          departmentName: data.departmentName || '',
+          address: data.address || '',
+          contact: data.contact || '',
+        });
+      }
+    } catch (error) {
+      console.error("Error loading shared configurations:", error);
     }
   };
 
@@ -102,7 +117,7 @@ const DailyReports = () => {
 
   useEffect(() => {
     if (userData) {
-      fetchSettings();
+      fetchGlobalConfig();
       fetchReports();
     }
   }, [userData]);
@@ -164,7 +179,7 @@ const DailyReports = () => {
     }
   };
 
-  // ── Generate PDF — only from the current user's own filtered reports ──────────
+  // ── Generate PDF — combining User Profile Fields + Shared Global Config ──
   const handleGeneratePDF = () => {
     if (filteredReports.length === 0) {
       toast.error('No reports to generate PDF');
@@ -181,7 +196,19 @@ const DailyReports = () => {
       return;
     }
 
-    generateAccomplishmentPDF(ownReports, userData, dateRange, settings || {});
+    // Construct customized settings object containing the user's isolated signees and custom holidays
+    const compiledPdfSettings = {
+      departmentName: globalSettings.departmentName,
+      address: globalSettings.address,
+      contact: globalSettings.contact,
+      signatories: userData?.signatories || {
+        supervisor: { name: '', title: '', division: '' },
+        head:       { name: '', title: '' },
+      },
+      holidays: userData?.holidays || []
+    };
+
+    generateAccomplishmentPDF(ownReports, userData, dateRange, compiledPdfSettings);
     toast.success('PDF generated successfully!');
   };
 
