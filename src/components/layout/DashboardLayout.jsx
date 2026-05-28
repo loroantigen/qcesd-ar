@@ -11,9 +11,9 @@ const DashboardLayout = () => {
       <div className="flex-1 flex flex-col min-h-screen lg:ml-0">
         <Topbar />
         
-        <main className="flex-1 p-6 overflow-auto">
-          <Outlet />
-        </main>
+        <main className="flex-1 flex-auto p-6 overflow-auto w-full min-w-0">
+  <Outlet />
+</main>
         
         <footer className="bg-white border-t border-gray-200 px-6 py-4">
           <p className="text-sm text-gray-500 text-center">

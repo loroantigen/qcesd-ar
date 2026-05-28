@@ -1,8 +1,7 @@
 import { useState, useEffect } from 'react';
-import { collection, addDoc, getDocs, query, orderBy } from 'firebase/firestore';
+import { collection, doc, getDocs, query, orderBy, where, writeBatch } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { useStore } from '../store/useStore';
-import { format } from 'date-fns';
 import { Save, FileText, Calendar, AlertCircle } from 'lucide-react';
 import Button from '../components/ui/Button';
 import toast from 'react-hot-toast';
@@ -12,6 +11,9 @@ const InsertDailyReport = () => {
   const [taskTemplates, setTaskTemplates] = useState([]);
   const [reportDate, setReportDate] = useState(new Date().toISOString().split('T')[0]);
   const [counts, setCounts] = useState({});
+  
+  // ── Track existing document IDs to handle updates and decreases/deletes ──────
+  const [existingDocIds, setExistingDocIds] = useState({}); 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isLoadingTemplates, setIsLoadingTemplates] = useState(true);
 
@@ -42,6 +44,46 @@ const InsertDailyReport = () => {
     fetchTemplates();
   }, [userData?.uid]);
 
+  // ── Sync counts from existing reports when the date changes ────────────────
+  useEffect(() => {
+    if (!userData?.uid || taskTemplates.length === 0) return;
+
+    const fetchExistingReports = async () => {
+      try {
+        const reportsRef = collection(db, 'dailyreports');
+        const q = query(
+          reportsRef,
+          where('uid', '==', userData.uid),
+          where('reportDate', '==', reportDate)
+        );
+        const snapshot = await getDocs(q);
+
+        // Prepare default structural maps
+        const syncedCounts = {};
+        const docMapping = {};
+        taskTemplates.forEach(task => { syncedCounts[task.id] = 0; });
+
+        // Overlay existing Firestore data if it exists
+        snapshot.docs.forEach(docSnap => {
+          const data = docSnap.data();
+          const matchingTemplate = taskTemplates.find(t => t.text === data.task);
+          if (matchingTemplate) {
+            syncedCounts[matchingTemplate.id] = data.count;
+            docMapping[matchingTemplate.id] = docSnap.id; // Map your template ID to Firestore doc ID
+          }
+        });
+
+        setCounts(syncedCounts);
+        setExistingDocIds(docMapping);
+      } catch (error) {
+        console.error('Error fetching historical data:', error);
+        toast.error('Failed to load existing records for this date');
+      }
+    };
+
+    fetchExistingReports();
+  }, [reportDate, taskTemplates, userData?.uid]);
+
   const handleCountChange = (taskId, value) => {
     const num = parseInt(value) || 0;
     if (num < 0) return;
@@ -54,42 +96,48 @@ const InsertDailyReport = () => {
       return;
     }
 
-    const hasEntries = Object.values(counts).some(c => c > 0);
-    if (!hasEntries) {
-      toast.error('Please enter at least one task count');
-      return;
-    }
-
     setIsSubmitting(true);
     try {
-      const batch = [];
+      // Using writeBatch handles creates, updates, and deletes atomicaly
+      const batch = writeBatch(db);
+      const currentDocIds = { ...existingDocIds };
 
       taskTemplates.forEach((task) => {
         const count = counts[task.id] || 0;
+        const existingDocId = existingDocIds[task.id];
+
         if (count > 0) {
-          batch.push(
-            addDoc(collection(db, 'dailyreports'), {
-              uid:        userData.uid,          // ← owner's uid always saved
-              fullname:   userData.fullname,
-              position:   userData.position || 'Employee',
-              reportDate: reportDate,
-              task:       task.text,
-              count:      count,
-              status:     'pending',
-              createdAt:  new Date().toISOString(),
-            })
-          );
+          // Point to the existing doc if it exists, otherwise generate a clean doc reference
+          const docRef = existingDocId 
+            ? doc(db, 'dailyreports', existingDocId) 
+            : doc(collection(db, 'dailyreports'));
+
+          batch.set(docRef, {
+            uid:        userData.uid,
+            fullname:   userData.fullname,
+            position:   userData.position || 'Employee',
+            reportDate: reportDate,
+            task:       task.text,
+            count:      count,
+            status:     'pending',
+            createdAt:  new Date().toISOString(),
+          }, { merge: true });
+
+          // Retain tracking of newly initialized document reference IDs
+          if (!existingDocId) {
+            currentDocIds[task.id] = docRef.id;
+          }
+        } else if (existingDocId && count === 0) {
+          // If the record exists but was decreased to 0, completely purge it
+          const docRef = doc(db, 'dailyreports', existingDocId);
+          batch.delete(docRef);
+          delete currentDocIds[task.id];
         }
       });
 
-      await Promise.all(batch);
-      toast.success('Daily report submitted successfully!');
-
-      // Reset counts
-      const resetCounts = {};
-      taskTemplates.forEach(task => { resetCounts[task.id] = 0; });
-      setCounts(resetCounts);
-
+      await batch.commit();
+      setExistingDocIds(currentDocIds);
+      toast.success('Daily report updated successfully!');
     } catch (error) {
       console.error('Error submitting report:', error);
       toast.error('Failed to submit report');

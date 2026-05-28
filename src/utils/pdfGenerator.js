@@ -42,7 +42,7 @@ const RESERVED_STATUS_WORDS = [
 
 // ─── Header ──────────────────────────────────────────────────────────────────
 
-const addHeader = (doc, settings, userData, dateRange) => {
+const addHeader = (doc, settings, userData, dateRange, isFirstPage = true) => {
   const pageWidth = doc.internal.pageSize.getWidth();
 
   // 1. 3-in-1 Header Logo Strip (Left Side) - Base boundary fixed at Y = 10
@@ -97,43 +97,45 @@ const addHeader = (doc, settings, userData, dateRange) => {
     align: "left",
   });
 
-  // 3. Report Titles (Centered)
+  // 3. Report Titles (Centered) — only on the first page
 
-  doc.setFontSize(13);
+  if (isFirstPage) {
+    doc.setFontSize(13);
 
-  doc.setFont("helvetica", "bold");
+    doc.setFont("helvetica", "bold");
 
-  doc.text("Accomplishment Report", pageWidth / 2, 58, { align: "center" });
+    doc.text("Accomplishment Report", pageWidth / 2, 53, { align: "center" });
 
-  const startFmt = format(parseISO(dateRange.startDate), "MMMM dd");
+    const startFmt = format(parseISO(dateRange.startDate), "MMMM dd");
 
-  const endFmt = format(parseISO(dateRange.endDate), "MMMM dd, yyyy");
+    const endFmt = format(parseISO(dateRange.endDate), "MMMM dd, yyyy");
 
-  doc.setFontSize(11);
+    doc.setFontSize(11);
 
-  doc.setFont("helvetica", "normal");
+    doc.setFont("helvetica", "normal");
 
-  doc.text(`Attendance Period: ${startFmt} to ${endFmt}`, pageWidth / 2, 65, {
-    align: "center",
-  });
+    doc.text(`Attendance Period: ${startFmt} to ${endFmt}`, pageWidth / 2, 60, {
+      align: "center",
+    });
 
-  const { label } = computePayrollPeriod(dateRange.endDate);
+    const { label } = computePayrollPeriod(dateRange.endDate);
 
-  const payrollLine = `Payroll Period: ${label}`;
+    const payrollLine = `Payroll Period: ${label}`;
 
-  doc.setFont("helvetica", "bold");
+    doc.setFont("helvetica", "bold");
 
-  doc.text(payrollLine, pageWidth / 2, 72, { align: "center" });
+    doc.text(payrollLine, pageWidth / 2, 67, { align: "center" });
 
-  // Underline for Payroll Period
+    // Underline for Payroll Period
 
-  const pw = doc.getTextWidth(payrollLine);
+    const pw = doc.getTextWidth(payrollLine);
 
-  doc.setDrawColor(0);
+    doc.setDrawColor(0);
 
-  doc.setLineWidth(0.3);
+    doc.setLineWidth(0.3);
 
-  doc.line(pageWidth / 2 - pw / 2, 73.5, pageWidth / 2 + pw / 2, 73.5);
+    doc.line(pageWidth / 2 - pw / 2, 68.5, pageWidth / 2 + pw / 2, 68.5);
+  }
 };
 
 // ─── Footer ──────────────────────────────────────────────────────────────────
@@ -416,7 +418,7 @@ export const generateAccomplishmentPDF = async (
     const tableBody = buildTableRows(groups);
 
     autoTable(doc, {
-      startY: 78,
+      startY: 74,
 
       head: [
         [
@@ -448,6 +450,8 @@ export const generateAccomplishmentPDF = async (
 
       body: tableBody,
 
+      showHead: "firstPage",
+ 
       theme: "grid",
 
       headStyles: {
@@ -461,7 +465,7 @@ export const generateAccomplishmentPDF = async (
       },
 
       styles: {
-        fontSize: 7,
+        fontSize: 8,
 
         cellPadding: { top: 1.2, right: 3, bottom: 1.2, left: 3 },
 
@@ -483,9 +487,7 @@ export const generateAccomplishmentPDF = async (
       },
 
       didDrawPage: (data) => {
-        if (data.pageNumber > 1) {
-          addHeader(doc, settings, userData, dateRange);
-        }
+        // No header on page 2+
       },
     });
 
@@ -502,7 +504,7 @@ export const generateAccomplishmentPDF = async (
 
       signatureY = 35;
 
-      addHeader(doc, settings, userData, dateRange);
+      // No header on overflow page
     }
 
     doc.setFont("helvetica", "normal");
@@ -595,7 +597,9 @@ export const generateAccomplishmentPDF = async (
 
     const totalPages = doc.internal.getNumberOfPages();
 
-    for (let i = 1; i <= totalPages; i++) {
+    // Single page → footer on page 1; multi-page → footer on page 2+ only
+    const footerStart = totalPages === 1 ? 1 : 2;
+    for (let i = footerStart; i <= totalPages; i++) {
       doc.setPage(i);
 
       addFooter(doc, userData, settings, i, totalPages);

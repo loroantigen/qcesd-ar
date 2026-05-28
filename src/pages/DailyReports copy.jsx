@@ -5,7 +5,7 @@ import { useStore } from '../store/useStore';
 import { format, parseISO, isWeekend, eachDayOfInterval, startOfMonth, endOfMonth } from 'date-fns';
 import {
   Search, Filter, FileText, Download, Calendar,
-  ChevronLeft, ChevronRight, AlertCircle, Users
+  ChevronLeft, ChevronRight, AlertCircle
 } from 'lucide-react';
 import Button from '../components/ui/Button';
 import { generateAccomplishmentPDF } from '../utils/pdfGenerator';
@@ -19,75 +19,37 @@ const DEFAULT_PH_HOLIDAYS = [
 
 const DailyReports = () => {
   const { userData } = useStore();
-  const [reports, setReports] = useState([]);
+  const [reports,         setReports]         = useState([]);
   const [filteredReports, setFilteredReports] = useState([]);
-  const [globalSettings, setGlobalSettings] = useState({
+  const [globalSettings,  setGlobalSettings]  = useState({
     departmentName: '',
     address: '',
     contact: '',
   });
-  const [dateRange, setDateRange] = useState({
+  const [dateRange,       setDateRange]       = useState({
     startDate: format(startOfMonth(new Date()), 'yyyy-MM-dd'),
-    endDate: format(endOfMonth(new Date()), 'yyyy-MM-dd'),
+    endDate:   format(endOfMonth(new Date()),   'yyyy-MM-dd'),
   });
-  const [searchTerm, setSearchTerm] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
+  const [searchTerm,  setSearchTerm]  = useState('');
+  const [isLoading,   setIsLoading]   = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 31;
 
-  // ── Role checks ──
+  // ── STRICT role check — only 'admin' can see all reports ─────────────────────
   const isAdmin = userData?.role === 'admin';
-  const isModerator = userData?.role === 'moderator';
-  const canSelectEmployee = isAdmin || isModerator;
 
-  // ── Employee selection (moderator/admin) ──
-  const [employeeList, setEmployeeList] = useState([]);
-  const [selectedEmployeeId, setSelectedEmployeeId] = useState(userData?.uid || '');
-  const [selectedEmployeeData, setSelectedEmployeeData] = useState(null);
-
-  // ── Fetch employee list ──
-  useEffect(() => {
-    if (canSelectEmployee) {
-      const fetchEmployees = async () => {
-        try {
-          const snap = await getDocs(collection(db, 'users'));
-          const list = snap.docs.map(d => ({ id: d.id, ...d.data() }))
-            .filter(u => u.role === 'employee' || !u.role);
-          setEmployeeList(list);
-        } catch (err) {
-          console.error('Failed to load employees', err);
-        }
-      };
-      fetchEmployees();
-    }
-  }, [canSelectEmployee]);
-
-  // ── Fetch selected employee profile ──
-  useEffect(() => {
-    if (canSelectEmployee && selectedEmployeeId) {
-      const fetchEmp = async () => {
-        const snap = await getDoc(doc(db, 'users', selectedEmployeeId));
-        if (snap.exists()) setSelectedEmployeeData({ id: snap.id, ...snap.data() });
-      };
-      fetchEmp();
-    } else if (!canSelectEmployee) {
-      setSelectedEmployeeData(null);
-    }
-  }, [selectedEmployeeId, canSelectEmployee]);
-
-  // ── Holidays: use selected employee's holidays if available ──
+  // ── Modified to map user's isolated custom holidays ──────────────────────────
   const getHolidaySet = () => {
-    const targetHolidays = (canSelectEmployee && selectedEmployeeData?.holidays)
-      ? selectedEmployeeData.holidays
-      : userData?.holidays;
-
-    if (Array.isArray(targetHolidays) && targetHolidays.length > 0) {
-      return new Set(targetHolidays.map(h => (typeof h === 'string' ? h : h.date)));
+    // Look for holidays saved directly in the active user profile data
+    const userHolidays = userData?.holidays;
+    if (Array.isArray(userHolidays) && userHolidays.length > 0) {
+      return new Set(userHolidays.map(h => (typeof h === 'string' ? h : h.date)));
     }
+    // Fall back to statutory country default values
     return new Set(DEFAULT_PH_HOLIDAYS);
   };
 
-  // ── Fetch Shared Department Information ──
+  // ── Fetch Shared Department Information ──────────────────────────────────────
   const fetchGlobalConfig = async () => {
     try {
       const docSnap = await getDoc(doc(db, 'settings', 'general'));
@@ -104,21 +66,25 @@ const DailyReports = () => {
     }
   };
 
-  // ── Fetch reports ──
+  // ── Fetch reports — ALWAYS filter by uid for non-admins ──────────────────────
   const fetchReports = async () => {
-    const targetUid = canSelectEmployee ? selectedEmployeeId : userData?.uid;
-    if (!targetUid || !userData?.uid) return;
+    if (!userData?.uid) return;   // Guard: never fetch without a known user
 
     setIsLoading(true);
     try {
       const reportsRef = collection(db, 'dailyreports');
-      const q = query(reportsRef, where('uid', '==', targetUid));
+
+      // Employees always get their own uid filter — no exceptions
+      const q = isAdmin
+        ? query(reportsRef)
+        : query(reportsRef, where('uid', '==', userData.uid));
+
       const snapshot = await getDocs(q);
 
-      // Safety filter
+      // Secondary client-side guard: even if the query leaks, strip foreign records
       const data = snapshot.docs
         .map(d => ({ id: d.id, ...d.data() }))
-        .filter(r => isAdmin || isModerator || r.uid === userData.uid);
+        .filter(r => isAdmin || r.uid === userData.uid);   // ← double-check
 
       setReports(data);
       applyFilters(data, dateRange, searchTerm);
@@ -154,30 +120,30 @@ const DailyReports = () => {
       fetchGlobalConfig();
       fetchReports();
     }
-  }, [userData, selectedEmployeeId]);
+  }, [userData]);
 
   useEffect(() => {
     applyFilters(reports, dateRange, searchTerm);
   }, [dateRange, searchTerm]);
 
-  // ── Calendar builder ──
+  // ── Calendar builder ──────────────────────────────────────────────────────────
   const getCalendarData = () => {
     const holidaySet = getHolidaySet();
     const start = parseISO(dateRange.startDate);
-    const end = parseISO(dateRange.endDate);
-    const days = eachDayOfInterval({ start, end });
+    const end   = parseISO(dateRange.endDate);
+    const days  = eachDayOfInterval({ start, end });
 
     const dayMap = {};
     days.forEach(day => {
       const dateStr = format(day, 'yyyy-MM-dd');
       dayMap[dateStr] = {
-        date: dateStr,
-        dayNum: format(day, 'd'),
-        month: format(day, 'MMMM'),
-        dayName: format(day, 'EEEE'),
-        isWeekend: isWeekend(day),
-        isHoliday: holidaySet.has(dateStr),
-        tasks: {},
+        date:       dateStr,
+        dayNum:     format(day, 'd'),
+        month:      format(day, 'MMMM'),
+        dayName:    format(day, 'EEEE'),
+        isWeekend:  isWeekend(day),
+        isHoliday:  holidaySet.has(dateStr),
+        tasks:      {},
         totalCount: 0,
       };
     });
@@ -196,8 +162,8 @@ const DailyReports = () => {
   const calendarData = getCalendarData();
 
   const getStatus = (day) => {
-    if (day.isWeekend) return day.dayName === 'Saturday' ? 'SATURDAY' : 'SUNDAY';
-    if (day.isHoliday) return 'HOLIDAY';
+    if (day.isWeekend)  return day.dayName === 'Saturday' ? 'SATURDAY' : 'SUNDAY';
+    if (day.isHoliday)  return 'HOLIDAY';
     if (day.totalCount === 0) return 'ABSENT';
     return 'TASK ACCOMPLISHED';
   };
@@ -205,43 +171,48 @@ const DailyReports = () => {
   const getStatusColor = (status) => {
     switch (status) {
       case 'TASK ACCOMPLISHED': return 'bg-green-100 text-green-800';
-      case 'ABSENT': return 'bg-red-100 text-red-800';
+      case 'ABSENT':            return 'bg-red-100 text-red-800';
       case 'SATURDAY':
-      case 'SUNDAY': return 'bg-blue-100 text-blue-800';
-      case 'HOLIDAY': return 'bg-purple-100 text-purple-800';
-      default: return 'bg-gray-100 text-gray-800';
+      case 'SUNDAY':            return 'bg-blue-100 text-blue-800';
+      case 'HOLIDAY':           return 'bg-purple-100 text-purple-800';
+      default:                  return 'bg-gray-100 text-gray-800';
     }
   };
 
-  // ── Generate PDF ──
+  // ── Generate PDF — combining User Profile Fields + Shared Global Config ──
   const handleGeneratePDF = () => {
     if (filteredReports.length === 0) {
       toast.error('No reports to generate PDF');
       return;
     }
 
-    const targetUser = (canSelectEmployee && selectedEmployeeData) ? selectedEmployeeData : userData;
-    if (!canSelectEmployee && filteredReports.some(r => r.uid !== userData.uid)) {
+    // Final safety filter before PDF generation
+    const ownReports = isAdmin
+      ? filteredReports
+      : filteredReports.filter(r => r.uid === userData.uid);
+
+    if (ownReports.length === 0) {
       toast.error('No reports found for your account');
       return;
     }
 
+    // Construct customized settings object containing the user's isolated signees and custom holidays
     const compiledPdfSettings = {
       departmentName: globalSettings.departmentName,
       address: globalSettings.address,
       contact: globalSettings.contact,
-      signatories: targetUser?.signatories || {
+      signatories: userData?.signatories || {
         supervisor: { name: '', title: '', division: '' },
-        head: { name: '', title: '' },
+        head:       { name: '', title: '' },
       },
-      holidays: targetUser?.holidays || []
+      holidays: userData?.holidays || []
     };
 
-    generateAccomplishmentPDF(filteredReports, targetUser, dateRange, compiledPdfSettings);
+    generateAccomplishmentPDF(ownReports, userData, dateRange, compiledPdfSettings);
     toast.success('PDF generated successfully!');
   };
 
-  const totalPages = Math.ceil(calendarData.length / itemsPerPage);
+  const totalPages    = Math.ceil(calendarData.length / itemsPerPage);
   const paginatedData = calendarData.slice(
     (currentPage - 1) * itemsPerPage,
     currentPage * itemsPerPage
@@ -250,8 +221,8 @@ const DailyReports = () => {
   return (
     <div className="space-y-6">
 
-      {/* Ownership / moderation notice */}
-      {!canSelectEmployee && (
+      {/* Ownership notice for employees */}
+      {!isAdmin && (
         <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 flex items-start gap-3">
           <AlertCircle className="text-blue-500 mt-0.5 flex-shrink-0" size={18} />
           <p className="text-sm text-blue-800">
@@ -260,41 +231,10 @@ const DailyReports = () => {
         </div>
       )}
 
-      {isModerator && selectedEmployeeData && (
-        <div className={`rounded-xl p-4 flex items-start gap-3 border ${selectedEmployeeData.printStatus?.ready ? 'bg-green-50 border-green-200' : 'bg-yellow-50 border-yellow-200'}`}>
-          <AlertCircle className={`mt-0.5 flex-shrink-0 ${selectedEmployeeData.printStatus?.ready ? 'text-green-500' : 'text-yellow-500'}`} size={18} />
-          <p className={`text-sm ${selectedEmployeeData.printStatus?.ready ? 'text-green-800' : 'text-yellow-800'}`}>
-            Viewing reports for <strong>{selectedEmployeeData.fullname}</strong>.
-            {selectedEmployeeData.printStatus?.ready
-              ? ' Accomplishments are marked as ready to print.'
-              : ' Accomplishments are NOT marked as ready yet.'}
-          </p>
-        </div>
-      )}
-
       {/* Filters */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
         <div className="flex flex-col lg:flex-row gap-4 items-end">
-          <div className={`flex-1 grid grid-cols-1 ${canSelectEmployee ? 'md:grid-cols-2 lg:grid-cols-4' : 'md:grid-cols-3'} gap-4 w-full`}>
-            {canSelectEmployee && (
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Employee</label>
-                <div className="relative">
-                  <Users size={18} className="absolute left-3 top-2.5 text-gray-400" />
-                  <select
-                    value={selectedEmployeeId}
-                    onChange={(e) => setSelectedEmployeeId(e.target.value)}
-                    className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 bg-white"
-                  >
-                    <option value="">Select Employee</option>
-                    {employeeList.map(emp => (
-                      <option key={emp.id} value={emp.id}>{emp.fullname || emp.email}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-            )}
-
+          <div className="flex-1 grid grid-cols-1 md:grid-cols-3 gap-4 w-full">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Start Date</label>
               <div className="relative">
@@ -327,7 +267,7 @@ const DailyReports = () => {
                 <Search size={18} className="absolute left-3 top-2.5 text-gray-400" />
                 <input
                   type="text"
-                  placeholder={canSelectEmployee ? 'Search tasks...' : 'Search your tasks...'}
+                  placeholder={isAdmin ? 'Search tasks or employees...' : 'Search your tasks...'}
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                   className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
@@ -377,7 +317,7 @@ const DailyReports = () => {
                 </tr>
               ) : (
                 paginatedData.map((day) => {
-                  const status = getStatus(day);
+                  const status      = getStatus(day);
                   const taskEntries = Object.entries(day.tasks);
                   return (
                     <tr key={day.date} className="hover:bg-gray-50 transition-colors">

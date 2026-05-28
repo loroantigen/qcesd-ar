@@ -242,7 +242,6 @@ const AdminPanel = () => {
                         className="text-sm border border-gray-300 rounded-lg px-2 py-1 focus:ring-2 focus:ring-primary-500"
                       >
                         <option value="employee">Employee</option>
-                        <option value="moderator">Moderator</option>
                         <option value="admin">Admin</option>
                       </select>
                     </td>

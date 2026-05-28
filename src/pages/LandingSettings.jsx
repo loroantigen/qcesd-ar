@@ -8,6 +8,19 @@ import Input from '../components/ui/Input';
 import Button from '../components/ui/Button';
 import toast from 'react-hot-toast';
 
+// ── 1. DEFINE YOUR DEFAULT SIGNATORIES HERE ─────────────────────────────────
+const defaultSignatories = {
+  supervisor: {
+    name: 'ROLANDO V. CRUZ DMD, PHSAE, MPH',
+    title: 'Officer-In-Charge',
+    division: 'Epidemiology and Surveillance Division',
+  },
+  head: {
+    name: '',
+    title: '',
+  },
+};
+
 const LandingSettings = () => {
   const { userData, setUserData } = useStore(); // Get current logged-in user context
   
@@ -52,12 +65,27 @@ const LandingSettings = () => {
         const userSnap = await getDoc(doc(db, 'users', userData.uid));
         if (userSnap.exists()) {
           const uData = userSnap.data();
+          
           setUserSpecific({
             signatories: {
-              supervisor: { name: '', title: '', division: '', ...(uData.signatories?.supervisor || {}) },
-              head:       { name: '', title: '',               ...(uData.signatories?.head       || {}) },
+              supervisor: { 
+                // Checks Firestore data -> if blank/undefined, falls back to default settings
+                name:     uData.signatories?.supervisor?.name     || defaultSignatories.supervisor.name, 
+                title:    uData.signatories?.supervisor?.title    || defaultSignatories.supervisor.title, 
+                division: uData.signatories?.supervisor?.division || defaultSignatories.supervisor.division, 
+              },
+              head: { 
+                name:  uData.signatories?.head?.name  || defaultSignatories.head.name, 
+                title: uData.signatories?.head?.title || defaultSignatories.head.title, 
+              },
             },
             holidays: uData.holidays || [],
+          });
+        } else {
+          // If the user's document somehow doesn't exist yet, populate purely with defaults
+          setUserSpecific({
+            signatories: defaultSignatories,
+            holidays: [],
           });
         }
       } catch {
@@ -121,7 +149,7 @@ const LandingSettings = () => {
       .sort((a, b) => a.date.localeCompare(b.date));
       
     setUserSpecific(prev => ({ ...prev, holidays: sorted }));
-    setNewHoliday({ date: '', name: '' });
+    NewHoliday({ date: '', name: '' });
   };
 
   const handleRemoveHoliday = (date) => {
